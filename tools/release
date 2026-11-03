@@ -34,7 +34,7 @@ printf '%s\n' "$version" > VERSION
 signature=$(codesign -d -r- build/Holler.app 2>&1) || fail 'cannot inspect build signature'
 printf '%s\n' "$signature" | grep -q 'certificate leaf' || fail 'ad-hoc build; restore the stable .signing/ identity before publishing'
 archive="build/Holler-$version.zip"
-ditto -c -k --keepParent build/Holler.app "$archive"
+ditto -c -k --norsrc --noextattr --keepParent build/Holler.app "$archive"  # no AppleDouble/xattr clutter
 checksum=$(shasum -a 256 "$archive")
 checksum=${checksum%% *}
 notes_file="build/release-notes-$version.txt"
