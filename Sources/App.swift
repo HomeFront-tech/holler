@@ -32,7 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `kill`/`pkill` (build.sh, logout scripts) should quit politely: unmute, resume audio, restore clipboard.
         signal(SIGTERM, SIG_IGN)
         termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        termSource?.setEventHandler { NSApp.terminate(nil) }
+        // Ask from a run-loop block, not from inside this main-queue handler (see Media.finish(viaRunLoop:)).
+        termSource?.setEventHandler { RunLoop.main.perform { NSApp.terminate(nil) } }
         termSource?.resume()
         defaults.register(defaults: ["pauseAudio": true, "muteAudio": true, "sounds": true, "autoUpdate": true, "fnExcludedApps": [String]()])
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -210,7 +211,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if terminating { return .terminateNow }
         terminating = true; updater.stop(); retry?.invalidate(); hotkeys.stop(); generation += 1
         dictation.cancel(); inserter.cancel(); ghost.hide()
-        media.finish { NSApp.reply(toApplicationShouldTerminate: true) }
+        var replied = false
+        let reply = { if !replied { replied = true; NSApp.reply(toApplicationShouldTerminate: true) } }
+        media.finish(viaRunLoop: true, reply)
+        // Backstop: never hang on quit. Timers are run-loop sources, so this fires inside terminate's nested loop.
+        let backstop = Timer(timeInterval: 3, repeats: false) { _ in reply() }
+        RunLoop.main.add(backstop, forMode: .common)
         return .terminateLater
     }
 }

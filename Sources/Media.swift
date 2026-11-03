@@ -98,7 +98,10 @@ final class Media {
         }
         finish()
     }
-    func finish(_ completion: @escaping () -> Void = {}) {
+    /// `viaRunLoop`: deliver the completion as a main run-loop block instead of a main-queue dispatch. Quitting needs
+    /// this: AppKit's terminate waits in a nested event loop, and if terminate was itself called from a main-queue
+    /// block, the serial main queue can't run our completion until terminate returns - a deadlock.
+    func finish(viaRunLoop: Bool = false, _ completion: @escaping () -> Void = {}) {
         queue.async {
             self.generation += 1
             // Restore the original device, even if the default changed. Preserve later user volume changes.
@@ -117,7 +120,12 @@ final class Media {
                 _ = self.command("play"); Log.event("resumed Now Playing")
             }
             self.paused = nil
-            DispatchQueue.main.async(execute: completion)
+            if viaRunLoop {
+                CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue, completion)
+                CFRunLoopWakeUp(CFRunLoopGetMain())
+            } else {
+                DispatchQueue.main.async(execute: completion)
+            }
         }
     }
 }

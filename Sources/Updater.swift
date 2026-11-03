@@ -202,7 +202,7 @@ final class Updater {
                 relaunch.arguments = ["-c", "i=0; while /bin/kill -0 \"$2\" 2>/dev/null && [ $i -lt 75 ]; do sleep 0.2; i=$((i+1)); done; /usr/bin/open \"$1\"",
                                       "holler-relaunch", destination.path, String(getpid())]
                 relaunch.standardInput = FileHandle.nullDevice; relaunch.standardOutput = FileHandle.nullDevice; relaunch.standardError = FileHandle.nullDevice
-                do { try relaunch.run(); NSApp.terminate(nil) }
+                do { try relaunch.run(); RunLoop.main.perform { NSApp.terminate(nil) } }
                 catch { self.installing = false; self.reject(.relaunch) }
             }
         }
