@@ -1,0 +1,5 @@
+.signing/
+build/
+local/
+*.o
+.DS_Store

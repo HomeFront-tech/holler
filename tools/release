@@ -1,0 +1,52 @@
+#!/bin/sh
+# Publish a tested build signed by the stable identity in .signing/.
+set -eu
+cd "$(dirname "$0")/.."
+fail() { printf '%s\n' "Release refused: $*" >&2; exit 1; }
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'Usage: tools/release X.Y.Z ["What changed"]'
+version=$1
+printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || fail 'version must be X.Y.Z'
+[ -z "$(git status --porcelain --untracked-files=no)" ] || fail 'tracked tree is not clean'
+[ "$(git symbolic-ref --short HEAD)" = main ] || fail 'branch must be main'
+if git rev-parse --verify --quiet "refs/tags/v$version" >/dev/null; then fail "tag v$version already exists"; fi
+current=$(cat VERSION)
+# Compare digit strings without floating-point rounding or shell integer overflow.
+awk -v next_version="$version" -v current="$current" 'BEGIN {
+    split(next_version, n, "."); split(current, c, ".");
+    for (i = 1; i <= 3; i++) {
+        sub(/^0+/, "", n[i]); sub(/^0+/, "", c[i]);
+        if (length(n[i]) != length(c[i])) exit !(length(n[i]) > length(c[i]));
+        if ("x" n[i] != "x" c[i]) exit !("x" n[i] > "x" c[i]);
+    }
+    exit 1;
+}' || fail "version must be higher than $current"
+command -v gh >/dev/null 2>&1 || fail 'gh is not installed'
+
+# Restore VERSION after a failed pre-commit build, but preserve a completed release commit for recovery.
+committed=false
+restore_version() {
+    if [ "$committed" = false ] && [ "$(cat VERSION)" = "$version" ]; then printf '%s\n' "$current" > VERSION; fi
+}
+trap restore_version EXIT
+trap 'exit 1' HUP INT TERM
+printf '%s\n' "$version" > VERSION
+./build.sh --test
+signature=$(codesign -d -r- build/Holler.app 2>&1) || fail 'cannot inspect build signature'
+printf '%s\n' "$signature" | grep -q 'certificate leaf' || fail 'ad-hoc build; restore the stable .signing/ identity before publishing'
+archive="build/Holler-$version.zip"
+ditto -c -k --keepParent build/Holler.app "$archive"
+checksum=$(shasum -a 256 "$archive")
+checksum=${checksum%% *}
+notes_file="build/release-notes-$version.txt"
+if [ "$#" -eq 2 ]; then printf '%s\n\n' "$2" > "$notes_file"; else : > "$notes_file"; fi
+printf 'SHA-256 (Holler-%s.zip): %s\n' "$version" "$checksum" >> "$notes_file"
+git commit --only -m "Release v$version" -- VERSION
+committed=true
+git tag -a "v$version" -m "Release v$version"
+git push origin main "v$version"
+if [ "$#" -eq 2 ]; then
+    gh release create "v$version" "$archive" --title "v$version" --notes-file "$notes_file"
+else
+    gh release create "v$version" "$archive" --title "v$version" --notes-file "$notes_file" --generate-notes
+fi
+printf 'Released v%s. Installed copies update themselves within 6 hours.\n' "$version"
